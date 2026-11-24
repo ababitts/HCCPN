@@ -1,0 +1,1361 @@
+########Implementation of hierarchical correlation clustering of perception networks and comparison to established latent classes in those with LSS############
+#assign base R version 4.6.1!!!!!!!!!!
+R.version.string ##confirm R version used to replicate the results
+###packages
+install.packages("dplyr")
+library(dplyr) ###for recoding variable scales and renaming variables and rescale
+install.packages("rigr")
+library(rigr) ###descrip()
+install.packages("cluster")
+library(cluster) #for Silhouette score
+install.packages("clusterCrit")
+library(clusterCrit) ##for CH index and DB index
+install.packages("ppcor")
+library(ppcor) ### for Spearman's partial correlations for generating networks
+install.packages("corrplot")
+library(corrplot) #for correlation plots
+install.packages("igraph")
+library(igraph) #for making networks
+install.packages("ggplot2")
+library(ggplot2) ###for visualizing the degree and betweenness plots and Sankey Plot
+
+###upload dataset
+data<-read.csv("prospects_baseline_2025-12-01.csv")
+
+###Load LCA class memberships and probabilities
+lca_data<-read.csv("lca_2025_12_01.csv")
+
+###merge LCA classes with baseline data frame: 'data'
+data$lcaclass <- lca_data$lcacat[ match(data$id, lca_data$id) ]
+
+###recode race for 0=white as referent, then 1=black, 2=asian, and 3=other
+data$new_race <- recode(data$race_cat,
+                        '5' = 0,
+                        '1' = 1,
+                        '4' = 2,
+                        '6' = 3,
+                        '2' = 3,
+                        '3' = 3,
+                        '9' = 3)
+###Recode education to 3= professional or graduate, 2 = 4 year college, 1 = some college and vocational, 0 = high school or less
+data$new_education <- recode(data$education,
+                             '0' = 0,
+                             '1' = 0,
+                             '2' = 1,
+                             '3' = 1,
+                             '4' = 2,
+                             '5' = 3)
+###recode employment to 0 = working full or part time, 1 = retired NOT due to ill health, 2 = retired or disabled due to ill health, 3 = not paid position (on leave, unemployed looking, homemaker, other) 
+data$new_employment <- recode(data$employment,
+                              '0' = 0,
+                              '1' = 0,
+                              '2' = 1,
+                              '3' = 3,
+                              '5' = 2,
+                              '4' = 3,
+                              '6' = 3,
+                              '98'=3)
+###Recode marital to 0 = partnered (married or living with partner), 1 = not partnered (separated, divorced, never married, widowed)
+data$new_marital <- recode(data$marital,
+                           '0' = 0,
+                           '1' = 0,
+                           '2' = 1,
+                           '3' = 1,
+                           '4' = 1,
+                           '5' = 1)
+
+
+###recode chronicity duration ###0 = <3 months, 1=3-6, 2=6mo-1yr, 3=1-5 years, 4=>5 years
+data$new_nih_chron1 <- recode(data$nih_chron1,
+                              '0' = 0,
+                              '1' = 0,
+                              '2' = 1,
+                              '3' = 2,
+                              '4' = 3,
+                              '5' = 4)
+
+###recode chronicity frequency ###1-3 scale
+data$new_nih_chron2 <- recode(data$nih_chron2,
+                              '0' = 1,
+                              '1' = 2,
+                              '2' = 3)
+
+###recode STarT Back ###1 = low, 3=high psychological distress
+data$new_sb_sub5_9 <- recode(data$sb_sub5_9,
+                             '0' = 1,
+                             '1' = 1,
+                             '2' = 1,
+                             '3' = 1,
+                             '4' = 3,
+                             '5' = 3)
+
+###cut and recategorize number of painful sites and will be categorized to 1:0-1, 2:2-3, 3:≥4
+data$new_ops_cnt <- cut(
+  data$ops_cnt,
+  breaks = c(-Inf, 1, 3, Inf),
+  labels = c("0–1", "2–3", "≥4"),
+  right = TRUE
+)
+data$new_ops_cnt<-as.integer(data$new_ops_cnt)
+
+###cut and recategorize number of comorbidities
+data$new_fci <- cut(
+  data$fci,
+  breaks = c(-Inf, 0,1,2, 3, Inf),
+  labels = c("0", "1", "2", "3", "≥4"),
+  right = TRUE
+)
+data$new_fci<-as.integer(data$new_fci)
+###recode new_fci from 1-5 to 0-4
+data$new_fci <- recode(data$new_fci,
+                       '1' = 0,
+                       '2' = 1,
+                       '3' = 2,
+                       '4' = 3,
+                       '5' = 4)
+
+###cut and recategorize back pain and set integer to 1-3
+data$new_nrs_back <- cut(
+  data$nrs_back,
+  breaks = c(-Inf, 3,6, Inf),
+  labels = c("0-3", "4-6", "≥7"),
+  right = TRUE
+)
+data$new_nrs_back<-as.integer(data$new_nrs_back)
+
+###cut and recategorize leg pain and set integer to 1-3
+data$new_nrs_leg <- cut(
+  data$nrs_leg,
+  breaks = c(-Inf, 3,6, Inf),
+  labels = c("0-3", "4-6", "≥7"),
+  right = TRUE
+)
+data$new_nrs_leg<-as.integer(data$new_nrs_leg)
+
+###cut and recategorize physical function
+data$new_ppf_TScore <- cut(
+  data$ppf_TScore,
+  breaks = c(-Inf, 40, 45, Inf),
+  labels = c("Moderate/Severe ≤40", "mild >40-45", "normal >45"),
+  right = TRUE
+)
+data$new_ppf_TScore<-as.integer(data$new_ppf_TScore)
+
+###cut and recategorize participation
+data$new_pp_TScore <- cut(
+  data$pp_TScore,
+  breaks = c(-Inf, 40, 45, Inf),
+  labels = c("Moderate/Severe ≤40", "mild >40-45", "normal >45"),
+  right = TRUE
+)
+data$new_pp_TScore<-as.integer(data$new_pp_TScore)
+
+###cut and recategorize pain interference
+data$new_ppi_TScore <- cut(
+  data$ppi_TScore,
+  breaks = c(-Inf, 55, 60, Inf),
+  labels = c("Normal <55", "mild ≥55-<60", "Moderate/Severe ≥60"),
+  right = FALSE
+)
+data$new_ppi_TScore<-as.integer(data$new_ppi_TScore)
+
+###cut and recategorize anxiety
+data$new_pa_TScore <- cut(
+  data$pa_TScore,
+  breaks = c(-Inf, 55, 60, Inf),
+  labels = c("Normal <55", "mild ≥55-<60", "Moderate/Severe ≥60"),
+  right = FALSE
+)
+data$new_pa_TScore<-as.integer(data$new_pa_TScore)
+
+###cut and recategorize depression
+data$new_pd_TScore <- cut(
+  data$pd_TScore,
+  breaks = c(-Inf, 55, 60, Inf),
+  labels = c("Normal <55", "mild ≥55-<60", "Moderate/Severe ≥60"),
+  right = FALSE
+)
+data$new_pd_TScore<-as.integer(data$new_pd_TScore)
+
+###cut and recategorize fatigue
+data$new_pf_TScore <- cut(
+  data$pf_TScore,
+  breaks = c(-Inf, 55, 60, Inf),
+  labels = c("Normal <55", "mild ≥55-<60", "Moderate/Severe ≥60"),
+  right = FALSE
+)
+data$new_pf_TScore<-as.integer(data$new_pf_TScore)
+
+###cut and recategorize sleep disturbance
+data$new_psd_TScore <- cut(
+  data$psd_TScore,
+  breaks = c(-Inf, 55, 60, Inf),
+  labels = c("Normal <55", "mild ≥55-<60", "Moderate/Severe ≥60"),
+  right = FALSE
+)
+data$new_psd_TScore<-as.integer(data$new_psd_TScore)
+
+
+#Aim 1:	identify and characterize clusters using physical and mental health self-reports, number of painful sites and comorbidities, and symptom duration and frequency
+###create a data frame with only variables of interest for Aim 1
+Aim1_data <- subset(data, select = c(new_pa_TScore, new_pd_TScore, new_pf_TScore, new_ppi_TScore, new_pp_TScore, 
+                                     new_ppf_TScore, new_psd_TScore, new_sb_sub5_9, new_nrs_back, new_nrs_leg, 
+                                     new_nih_chron1, new_nih_chron2, new_ops_cnt, new_fci))
+
+###rename variables to improve interpretation of figures
+Aim1_data <- Aim1_data %>%
+  rename(
+    Anxiety = new_pa_TScore,
+    Depression = new_pd_TScore,
+    Fatigue = new_pf_TScore,
+    Pain.Interference = new_ppi_TScore,
+    Social.Participation = new_pp_TScore,
+    Physical.Function = new_ppf_TScore,
+    Sleep.Disturbance = new_psd_TScore,
+    Psychological.Distress = new_sb_sub5_9,
+    Back.Pain.Intensity = new_nrs_back,
+    Leg.Pain.Intensity = new_nrs_leg, 
+    Symptom.Duration = new_nih_chron1, 
+    Symptom.Frequency = new_nih_chron2, 
+    Number.Pain.Sites  = new_ops_cnt, 
+    Number.Comorbidities = new_fci 
+  )
+
+# Step 1:Estimate response pattern correlations and generate the dendrogram
+#pairwise.complete.obs will eliminate variables with missingness between participants only
+#in the dataset, participants are rows and variables are columns so need to transpose to estimate response pattern correlations
+cor_matrix1.1 <- abs(cor(t(Aim1_data), use = "pairwise.complete.obs", method = "spearman")) 
+
+# Convert correlation matrix to distance matrix
+distance_matrix1.1 <- as.dist(1 - cor_matrix1.1)
+
+# Perform hierarchical clustering using Ward
+hc_complete1.1 <- hclust(distance_matrix1.1, method = "ward.D2")
+
+# Plot Dendrogram
+plot(hc_complete1.1, 
+     main = "Hierarchical Correlation Clustering Dendrogram", 
+     xlab = "Participants",
+     ylab = "Cluster Merger Height",
+     sub = "", 
+     cex = 0.9,
+     labels = FALSE)
+###End of correlation
+
+#Step 2: Identifying number of clusters using partitioning methods
+###Silhouette score
+# Try different numbers (k) of clusters
+k_values1.1 <- 2:10
+
+# Compute average silhouette width for each cluster (k)
+avg_sil1.1 <- sapply(k_values1.1, function(k) {
+  cluster_assignments1.1 <- cutree(hc_complete1.1, k)
+  sil1.1 <- silhouette(cluster_assignments1.1, distance_matrix1.1)
+  mean(sil1.1[, 3]) 
+})
+
+avg_sil1.1 ## provides quantitative values for each cluster set
+
+plot(k_values1.1, avg_sil1.1, type = "b", pch = 19,
+     xlab = "Number of Clusters",
+     ylab = "Average Silhouette Width",
+     main = "Silhouette Score Analysis")
+best_k_SS1.1 <- k_values1.1[which.max(avg_sil1.1)]
+cat("Optimal number of clusters from Silhouette Score:", best_k_SS1.1, "\n")
+abline(v = best_k_SS1.1, col = "red", lty = 2) 
+
+###Davies-Bouldin Index
+#estimate DB index for number of K clusters
+K_max1.1 <- 10
+db_values1.1 <- numeric(K_max1.1)
+
+# Compute DB index for each k
+for (k in 2:K_max1.1) {  
+  clusters1.1 <- cutree(hc_complete1.1, k)
+  db_values1.1[k] <- intCriteria(traj = as.matrix(distance_matrix1.1), 
+                                 part = clusters1.1, crit = "Davies_Bouldin")$davies_bouldin
+}
+db_values1.1 ###provides quantitative values for each cluster set. not defined for a 1-cluster solution
+
+# Plot DB index
+plot(2:K_max1.1, db_values1.1[2:K_max1.1], type = "b",
+     xlab = "Number of clusters", 
+     ylab = "DBI estimate",
+     main = "Davies-Bouldin Index Analysis")
+
+valid_k <- 2:K_max1.1
+optimal_k_DB1.1 <- valid_k[
+  which.min(db_values1.1[valid_k])
+]
+cat("Optimal number of clusters according to DB index:", optimal_k_DB1.1, "\n")
+abline(v = optimal_k_DB1.1, col = "red", lty = 2) 
+
+###Calinski-Harabasz index
+#estimate CH index for each K cluster
+ch_values1.1 <- numeric(K_max1.1)
+
+# Compute CH index for each k
+for (k in 2:K_max1.1) {  # CH index not defined for k=1
+  clusters1.1 <- cutree(hc_complete1.1, k)
+  ch_values1.1[k] <- intCriteria(traj = as.matrix(distance_matrix1.1), 
+                                 part = clusters1.1, crit = "Calinski_Harabasz")$calinski_harabasz
+}
+ch_values1.1 ###provides quantitative values for each cluster set. not defined for a 1-cluster solution
+
+# Plot CH index
+plot(2:K_max1.1, ch_values1.1[2:K_max1.1], type = "b",
+     xlab = "Number of clusters",
+     ylab = "CHI estimate",
+     main = "Calinski-Harabasz Index Analysis")
+
+optimal_k_CH1.1 <- which.max(ch_values1.1)
+cat("Optimal number of clusters according to CH index:", optimal_k_CH1.1, "\n")
+abline(v = optimal_k_CH1.1, col = "red", lty = 2) 
+
+###ELBOW METHOD
+# Function to compute total within-cluster sum of squares
+wss_hclust1.1 <- function(hc_complete1.1, distance_matrix1.1, k) {
+  clusters <- cutree(hc_complete1.1, k)
+  total_wss <- 0
+  dist_matrix <- as.matrix(distance_matrix1.1)
+  for (i in 1:k) {
+    members <- which(clusters == i)
+    if (length(members) > 1) {
+      cluster_dist <- dist_matrix[members, members]
+      total_wss <- total_wss + sum(cluster_dist^2) / (2 * length(members))
+    }
+  }
+  return(total_wss)
+}
+
+# Compute for different k values
+wss_values1.1 <- sapply(k_values1.1, function(k) {
+  wss_hclust1.1(hc_complete1.1, distance_matrix1.1, k)
+})
+wss_values1.1 ###provides quantitative values for each cluster set. starts at 2 clusters
+
+# Plot elbow curve
+plot(k_values1.1, wss_values1.1, type = "b", pch = 19,
+     xlab = "Number of clusters",
+     ylab = "Total Within-Cluster Sum of Squares",
+     main = "Elbow Method Analysis")
+###determined by the point where there is a bend in the curve (when the increase in the # of clusters does not change total WSS as much)
+abline(v = 5, col = "red", lty = 2) 
+
+###
+# Plot the dendrogram
+plot(hc_complete1.1, main = "Hierarchical Correlation Clustering Dendrogram",
+     xlab = "Participants", 
+     ylab = "Cluster Merger Height",
+     sub = "", 
+     cex = 0.9,
+     labels = FALSE)
+
+# Add rectangles to show clusters 
+rect.hclust(hc_complete1.1, k = 3, border = "red")
+#cut clusters in data
+cluster_assignments1.1a<-cutree(hc_complete1.1, k = 3)
+#confirm cluster order in dendrogram
+table(cluster_assignments1.1a)
+
+#recode based on order in dendrogram from left to right
+cluster_assignments1.1a<-recode(cluster_assignments1.1a,
+                                '1' = 3,
+                                '2' = 2,
+                                '3' = 1
+)
+table(cluster_assignments1.1a)
+##add cluster labels to dendrogram
+# Order of leaves on x-axis
+order_leaves <- hc_complete1.1$order
+
+# Cluster membership in plotting order
+clusters_ordered <- cluster_assignments1.1a[order_leaves]
+
+# Compute x-position for each cluster
+cluster_centers <- sapply(1:k, function(cl) {
+  mean(which(clusters_ordered == cl))
+})
+
+# Add text labels above rectangles
+text(
+  x = cluster_centers,
+  y = max(hc_complete1.1$height) * 1.02,
+  labels = paste("Cluster", 1:k),
+  col = "red",
+  font = 2
+)
+
+#############
+#Add clusters to Aim 1 data frame
+Aim1_data$cluster <- as.integer(cluster_assignments1.1a)
+table(Aim1_data$cluster) ###check to see if clusters are ordered appropriately
+
+#For Descriptives - Need to add the clusters to the main data frame that includes all variables
+data$cluster <- Aim1_data$cluster 
+
+####Cluster 1 Descriptives
+hc_1_descriptives<-subset(data, cluster == 1) 
+#Demographics
+descrip(hc_1_descriptives$index_age)
+tab6<-table(hc_1_descriptives$sex)
+prop.table(tab6)
+table(hc_1_descriptives$sex)
+descrip(hc_1_descriptives$sex)
+tab4<-table(hc_1_descriptives$new_race)
+descrip(hc_1_descriptives$new_race)
+prop.table(tab4)
+table(hc_1_descriptives$new_race)
+tab5<-table(hc_1_descriptives$hispanic)
+descrip(hc_1_descriptives$hispanic)
+prop.table(tab5)
+table(hc_1_descriptives$hispanic)
+tab2<-table(hc_1_descriptives$new_marital)
+prop.table(tab2)
+table(hc_1_descriptives$new_marital)
+descrip(hc_1_descriptives$new_marital)
+tab1<-table(hc_1_descriptives$new_education)
+prop.table(tab1)
+table(hc_1_descriptives$new_education)
+descrip(hc_1_descriptives$new_education)
+tab3<-table(hc_1_descriptives$new_employment)
+prop.table(tab3)
+table(hc_1_descriptives$new_employment)
+descrip(hc_1_descriptives$new_employment)
+#Clustering variables
+tab15<-table(hc_1_descriptives$new_nrs_back)
+prop.table(tab15)
+descrip(hc_1_descriptives$new_nrs_back)
+table(hc_1_descriptives$new_nrs_back)
+tab16<-table(hc_1_descriptives$new_nrs_leg)
+prop.table(tab16)
+descrip(hc_1_descriptives$new_nrs_leg)
+table(hc_1_descriptives$new_nrs_leg)
+tab17<-table(hc_1_descriptives$new_nih_chron1)
+prop.table(tab17)
+table(hc_1_descriptives$new_nih_chron1)
+descrip(hc_1_descriptives$new_nih_chron1)
+tab18<-table(hc_1_descriptives$new_nih_chron2)
+prop.table(tab18)
+table(hc_1_descriptives$new_nih_chron2)
+descrip(hc_1_descriptives$new_nih_chron2)
+tab19<-table(hc_1_descriptives$new_ops_cnt)
+prop.table(tab19)
+table(hc_1_descriptives$new_ops_cnt)
+descrip(hc_1_descriptives$new_ops_cnt)
+tab20<-table(hc_1_descriptives$new_fci)
+prop.table(tab20)
+table(hc_1_descriptives$new_fci)
+descrip(hc_1_descriptives$new_fci)
+tab7<-table(hc_1_descriptives$new_pa_TScore)
+prop.table(tab7)
+table(hc_1_descriptives$new_pa_TScore)
+descrip(hc_1_descriptives$new_pa_TScore)
+tab8<-table(hc_1_descriptives$new_pd_TScore)
+prop.table(tab8)
+table(hc_1_descriptives$new_pd_TScore)
+descrip(hc_1_descriptives$new_pd_TScore)
+tab9<-table(hc_1_descriptives$new_pf_TScore)
+prop.table(tab9)
+table(hc_1_descriptives$new_pf_TScore)
+tab10<-table(hc_1_descriptives$new_psd_TScore)
+prop.table(tab10)
+table(hc_1_descriptives$new_psd_TScore)
+tab11<-table(hc_1_descriptives$new_ppi_TScore)
+prop.table(tab11)
+table(hc_1_descriptives$new_ppi_TScore)
+###Need to inverse integers to match normal, mild, moderate/severe for table
+tab13<-table(hc_1_descriptives$new_ppf_TScore)
+prop.table(tab13)
+table(hc_1_descriptives$new_ppf_TScore)
+###Need to inverse integers to match normal, mild, moderate/severe for table
+tab12<-table(hc_1_descriptives$new_pp_TScore)
+prop.table(tab12)
+table(hc_1_descriptives$new_pp_TScore)
+tab14<-table(hc_1_descriptives$new_sb_sub5_9)
+prop.table(tab14)
+table(hc_1_descriptives$new_sb_sub5_9)
+descrip(hc_1_descriptives$new_sb_sub5_9)
+
+
+####Cluster 2 Descriptives
+hc_2_descriptives<-subset(data, cluster == 2) 
+#Demographics
+descrip(hc_2_descriptives$index_age)
+tab6<-table(hc_2_descriptives$sex)
+prop.table(tab6)
+table(hc_2_descriptives$sex)
+descrip(hc_2_descriptives$sex)
+tab4<-table(hc_2_descriptives$new_race)
+prop.table(tab4)
+table(hc_2_descriptives$new_race)
+descrip(hc_2_descriptives$new_race)
+tab5<-table(hc_2_descriptives$hispanic)
+prop.table(tab5)
+table(hc_2_descriptives$hispanic)
+descrip(hc_2_descriptives$hispanic)
+tab2<-table(hc_2_descriptives$new_marital)
+prop.table(tab2)
+table(hc_2_descriptives$new_marital)
+descrip(hc_2_descriptives$new_marital)
+tab1<-table(hc_2_descriptives$new_education)
+prop.table(tab1)
+table(hc_2_descriptives$new_education)
+descrip(hc_2_descriptives$new_education)
+tab3<-table(hc_2_descriptives$new_employment)
+prop.table(tab3)
+table(hc_2_descriptives$new_employment)
+descrip(hc_2_descriptives$new_employment)
+#Clustering variables
+tab15<-table(hc_2_descriptives$new_nrs_back)
+prop.table(tab15)
+table(hc_2_descriptives$new_nrs_back)
+descrip(hc_2_descriptives$new_nrs_back)
+tab16<-table(hc_2_descriptives$new_nrs_leg)
+prop.table(tab16)
+table(hc_2_descriptives$new_nrs_leg)
+descrip(hc_2_descriptives$new_nrs_leg)
+tab17<-table(hc_2_descriptives$new_nih_chron1)
+prop.table(tab17)
+table(hc_2_descriptives$new_nih_chron1)
+descrip(hc_2_descriptives$new_nih_chron1)
+tab18<-table(hc_2_descriptives$new_nih_chron2)
+prop.table(tab18)
+table(hc_2_descriptives$new_nih_chron2)
+descrip(hc_2_descriptives$new_nih_chron2)
+tab19<-table(hc_2_descriptives$new_ops_cnt)
+prop.table(tab19)
+table(hc_2_descriptives$new_ops_cnt)
+descrip(hc_2_descriptives$new_ops_cnt)
+tab20<-table(hc_2_descriptives$new_fci)
+prop.table(tab20)
+table(hc_2_descriptives$new_fci)
+descrip(hc_2_descriptives$new_fci)
+tab7<-table(hc_2_descriptives$new_pa_TScore)
+prop.table(tab7)
+table(hc_2_descriptives$new_pa_TScore)
+descrip(hc_2_descriptives$new_pa_TScore)
+tab8<-table(hc_2_descriptives$new_pd_TScore)
+prop.table(tab8)
+table(hc_2_descriptives$new_pd_TScore)
+descrip(hc_2_descriptives$new_pd_TScore)
+tab9<-table(hc_2_descriptives$new_pf_TScore)
+prop.table(tab9)
+table(hc_2_descriptives$new_pf_TScore)
+descrip(hc_2_descriptives$new_pf_TScore)
+tab10<-table(hc_2_descriptives$new_psd_TScore)
+prop.table(tab10)
+table(hc_2_descriptives$new_psd_TScore)
+descrip(hc_2_descriptives$new_psd_TScore)
+tab11<-table(hc_2_descriptives$new_ppi_TScore)
+prop.table(tab11)
+table(hc_2_descriptives$new_ppi_TScore)
+descrip(hc_2_descriptives$new_ppi_TScore)
+###Need to inverse integers to match normal, mild, moderate/severe for table
+tab13<-table(hc_2_descriptives$new_ppf_TScore)
+prop.table(tab13)
+table(hc_2_descriptives$new_ppf_TScore)
+descrip(hc_2_descriptives$new_ppf_TScore)
+###Need to inverse integers to match normal, mild, moderate/severe for table
+tab12<-table(hc_2_descriptives$new_pp_TScore)
+prop.table(tab12)
+table(hc_2_descriptives$new_pp_TScore)
+descrip(hc_2_descriptives$new_pp_TScore)
+tab14<-table(hc_2_descriptives$new_sb_sub5_9)
+prop.table(tab14)
+table(hc_2_descriptives$new_sb_sub5_9)
+descrip(hc_2_descriptives$new_sb_sub5_9)
+
+
+####Cluster 3 Descriptives
+hc_3_descriptives<-subset(data, cluster == 3) 
+#Demographics
+descrip(hc_3_descriptives$index_age)
+tab6<-table(hc_3_descriptives$sex)
+prop.table(tab6)
+table(hc_3_descriptives$sex)
+descrip(hc_3_descriptives$sex)
+tab4<-table(hc_3_descriptives$new_race)
+prop.table(tab4)
+table(hc_3_descriptives$new_race)
+descrip(hc_3_descriptives$new_race)
+tab5<-table(hc_3_descriptives$hispanic)
+prop.table(tab5)
+table(hc_3_descriptives$hispanic)
+descrip(hc_3_descriptives$hispanic)
+tab2<-table(hc_3_descriptives$new_marital)
+prop.table(tab2)
+table(hc_3_descriptives$new_marital)
+descrip(hc_3_descriptives$new_marital)
+tab1<-table(hc_3_descriptives$new_education)
+prop.table(tab1)
+table(hc_3_descriptives$new_education)
+descrip(hc_3_descriptives$new_education)
+tab3<-table(hc_3_descriptives$new_employment)
+prop.table(tab3)
+table(hc_3_descriptives$new_employment)
+descrip(hc_3_descriptives$new_employment)
+#Clustering Variables
+tab15<-table(hc_3_descriptives$new_nrs_back)
+prop.table(tab15)
+table(hc_3_descriptives$new_nrs_back)
+descrip(hc_3_descriptives$new_nrs_back)
+tab16<-table(hc_3_descriptives$new_nrs_leg)
+prop.table(tab16)
+table(hc_3_descriptives$new_nrs_leg)
+descrip(hc_3_descriptives$new_nrs_leg)
+tab17<-table(hc_3_descriptives$new_nih_chron1)
+prop.table(tab17)
+table(hc_3_descriptives$new_nih_chron1)
+descrip(hc_3_descriptives$new_nih_chron1)
+tab18<-table(hc_3_descriptives$new_nih_chron2)
+prop.table(tab18)
+table(hc_3_descriptives$new_nih_chron2)
+descrip(hc_3_descriptives$new_nih_chron2)
+tab19<-table(hc_3_descriptives$new_ops_cnt)
+prop.table(tab19)
+table(hc_3_descriptives$new_ops_cnt)
+descrip(hc_3_descriptives$new_ops_cnt)
+tab20<-table(hc_3_descriptives$new_fci)
+prop.table(tab20)
+table(hc_3_descriptives$new_fci)
+descrip(hc_3_descriptives$new_fci)
+tab7<-table(hc_3_descriptives$new_pa_TScore)
+prop.table(tab7)
+table(hc_3_descriptives$new_pa_TScore)
+descrip(hc_3_descriptives$new_pa_TScore)
+tab8<-table(hc_3_descriptives$new_pd_TScore)
+prop.table(tab8)
+table(hc_3_descriptives$new_pd_TScore)
+descrip(hc_3_descriptives$new_pd_TScore)
+tab9<-table(hc_3_descriptives$new_pf_TScore)
+prop.table(tab9)
+table(hc_3_descriptives$new_pf_TScore)
+descrip(hc_3_descriptives$new_pf_TScore)
+tab10<-table(hc_3_descriptives$new_psd_TScore)
+prop.table(tab10)
+table(hc_3_descriptives$new_psd_TScore)
+descrip(hc_3_descriptives$new_psd_TScore)
+tab11<-table(hc_3_descriptives$new_ppi_TScore)
+prop.table(tab11)
+table(hc_3_descriptives$new_ppi_TScore)
+descrip(hc_3_descriptives$new_ppi_TScore)
+###Need to inverse integers to match normal, mild, moderate/severe for table
+tab13<-table(hc_3_descriptives$new_ppf_TScore)
+table(hc_3_descriptives$new_ppf_TScore)
+descrip(hc_3_descriptives$new_ppf_TScore)
+prop.table(tab13)
+###Need to inverse integers to match normal, mild, moderate/severe for table
+tab12<-table(hc_3_descriptives$new_pp_TScore)
+prop.table(tab12)
+table(hc_3_descriptives$new_pp_TScore)
+descrip(hc_3_descriptives$new_pp_TScore)
+tab14<-table(hc_3_descriptives$new_sb_sub5_9)
+prop.table(tab14)
+table(hc_3_descriptives$new_sb_sub5_9)
+descrip(hc_3_descriptives$new_sb_sub5_9)
+
+
+###Creating the cluster networks
+###separate clusters in individual data frames
+hc_1.1<-subset(Aim1_data, cluster == 1)
+hc_1.2<-subset(Aim1_data, cluster == 2)
+hc_1.3<-subset(Aim1_data, cluster == 3)
+
+#Create partial correlation matrix Cluster 1
+hc_1.1$cluster <- NULL #removes cluster ID
+hc_cc1.1 <- na.omit(hc_1.1) #removes cases with missing data
+
+# Run partial correlation matrix
+pcor_res1.1 <- pcor(hc_cc1.1, method = "spearman")
+pcor_mat1.1 <- pcor_res1.1$estimate #extracts correlation estimates
+corrplot(pcor_mat1.1, 
+         method="color", 
+         type = "upper", 
+         order = "original", 
+         addCoef.col = "black", 
+         tl.col = "black", 
+         COL2('PuOr'), 
+         addgrid.col = TRUE, 
+         tl.cex = 0.7, 
+         number.cex = 0.6)
+title(main = "Partial Correlation Matrix Cluster 1", line = 2)
+
+##extract p-values for cleaned correlation matrix
+p_mat1.1 <- pcor_res1.1$p.value
+
+corrplot(pcor_mat1.1,
+  method = "color",
+  type = "upper",
+  order = "original",
+  p.mat = p_mat1.1, 
+  sig.level = 0.05, #remove p>0.05
+  insig = "blank",
+  COL2('PuOr'),
+  addCoef.col = "black", 
+  tl.col = "black",
+  addgrid.col = TRUE, 
+  tl.cex = 0.7, 
+  number.cex = 0.6
+)
+title(main = "Cluster 1", line = 2, cex.main = 1.75)
+
+#Create partial correlation matrix Cluster 2
+hc_1.2$cluster <- NULL
+hc_cc1.2 <- na.omit(hc_1.2)
+
+# Run partial correlation matrix
+pcor_res1.2 <- pcor(hc_cc1.2, method = "spearman")
+pcor_mat1.2 <- pcor_res1.2$estimate
+corrplot(pcor_mat1.2, 
+         method="color", 
+         type = "upper", 
+         order = "original", 
+         addCoef.col = "black", 
+         tl.col = "black", 
+         COL2('PuOr'), 
+         addgrid.col = TRUE, 
+         tl.cex = 0.7, 
+         number.cex = 0.6)
+title(main = "Partial Correlation Matrix Cluster 2", line = 2)
+
+##extract p-values for cleaned correlation matrix
+p_mat1.2 <- pcor_res1.2$p.value
+
+corrplot(
+  pcor_mat1.2,
+  method = "color",
+  type = "upper",
+  order = "original",
+  p.mat = p_mat1.2,
+  sig.level = 0.05,
+  insig = "blank",
+  COL2('PuOr'),
+  addCoef.col = "black", 
+  tl.col = "black",
+  addgrid.col = TRUE, 
+  tl.cex = 0.7, 
+  number.cex = 0.6
+)
+title(main = "Cluster 2", line = 2, cex.main = 1.75)
+
+#Create partial correlation matrix Cluster 3
+hc_1.3$cluster <- NULL
+hc_cc1.3 <- na.omit(hc_1.3)
+
+# Run partial correlation matrix
+pcor_res1.3 <- pcor(hc_cc1.3, method = "spearman")
+pcor_mat1.3 <- pcor_res1.3$estimate
+corrplot(pcor_mat1.3, 
+         method="color", 
+         type = "upper", 
+         order = "original", 
+         addCoef.col = "black", 
+         tl.col = "black", 
+         COL2('PuOr'), 
+         addgrid.col = TRUE, 
+         tl.cex = 0.7, 
+         number.cex = 0.6)
+title(main = "Partial Correlation Matrix Cluster 3", line = 2)
+
+##extract p-values for cleaned correlation matrix
+p_mat1.3 <- pcor_res1.3$p.value
+
+corrplot(
+  pcor_mat1.3,
+  method = "color",
+  type = "upper",
+  order = "original",
+  p.mat = p_mat1.3,
+  sig.level = 0.05,
+  insig = "blank",
+  COL2('PuOr'),
+  addCoef.col = "black", 
+  tl.col = "black",
+  addgrid.col = TRUE, 
+  tl.cex = 0.7, 
+  number.cex = 0.6
+)
+title(main = "Cluster 3", line = 2, cex.main = 1.75)
+
+
+###Cluster 1 networks using the correlation matrices###########
+# Set threshold to p<0.05 for Network graphs (unweighted)
+alpha <- 0.05
+# Threshold the correlation matrix (keep both + and - values above threshold)
+pcor_mat1.1_uwp <- pcor_mat1.1
+pcor_mat1.1_uwp[p_mat1.1 >= alpha] <- 0
+diag(pcor_mat1.1_uwp) <- 0 #converts diagonal correlations to 0 to be removed from the network
+pcor_unweighted1.1_uwp <- ifelse(pcor_mat1.1_uwp != 0, 1, 0)  # any non-zero value becomes 1 for unweighted edges in network
+##generate the graph matrix
+g1.1_uwp <- graph_from_adjacency_matrix(pcor_unweighted1.1_uwp,
+                                        mode = "undirected",
+                                        weighted = NULL,
+                                        diag = FALSE)
+
+# Degree centrality (unweighted)
+degree_centrality1.1_uwp <- degree(g1.1_uwp, mode = "all", loops = FALSE) 
+
+# Normalize to [0,1]
+norm_degree1.1_uwp <- (degree_centrality1.1_uwp) /
+  (max(degree_centrality1.1_uwp))
+
+# Rank in descending order (1 = highest degree)
+rank_degree1.1_uwp <- rank(-degree_centrality1.1_uwp)
+
+# Combine and view
+degree_table1.1_uwp <- data.frame(
+  Degree = degree_centrality1.1_uwp,
+  Normalized = round(norm_degree1.1_uwp, 3),
+  Rank = rank_degree1.1_uwp
+)
+# Order by rank
+degree_table1.1_uwp <- degree_table1.1_uwp[order(degree_table1.1_uwp$Rank), ]
+
+print(degree_table1.1_uwp)
+
+###visualize Degree in figure
+degree_df1.1 <- data.frame(
+  Node = names(degree_centrality1.1_uwp),
+  Degree = degree_centrality1.1_uwp
+)
+
+degree_df1.1 <- degree_df1.1[order(degree_df1.1$Degree), ]
+
+ggplot(degree_df1.1, aes(x = reorder(Node, Degree), y = Degree)) +
+  geom_segment(aes(xend = Node, yend = 0), linewidth = 0.8) +
+  geom_point(size = 3) +
+  coord_flip() +
+  scale_y_continuous(
+    breaks = 0:5,
+    limits = c(0, 5)
+  ) +
+  labs(
+    title = "Cluster 1",
+    x = "",
+    y = "Degree"
+  ) +
+  theme_minimal()+
+  theme(plot.title=element_text(size=20, hjust = 0.25),
+        axis.text.y = element_text(size = 12))
+
+### Unweighted Betweenness ###
+betweenness_centrality1.1_uwp <- betweenness(
+  g1.1_uwp,
+  weights = NULL,      #ignore edge weights for unweighted networks
+  normalized = FALSE
+)
+# Normalized unweighted betweenness
+norm_betweenness1.1_uwp <- betweenness(
+  g1.1_uwp,
+  weights = NULL,     #ignore edge weights
+  normalized = TRUE
+)
+
+# Rank in descending order (higher = more central)
+rank_betweenness1.1_uwp <- rank(-betweenness_centrality1.1_uwp)
+betweenness_table1.1_uwp <- data.frame(
+  Betweenness = round(betweenness_centrality1.1_uwp, 2),
+  Normalized = round(norm_betweenness1.1_uwp, 2),
+  Rank = rank_betweenness1.1_uwp
+)
+betweenness_table1.1_uwp <- betweenness_table1.1_uwp[order(betweenness_table1.1_uwp$Rank), ]
+
+print(betweenness_table1.1_uwp)
+
+###visualize Betweenness
+bet_df1.1 <- data.frame(
+  Node = names(betweenness_centrality1.1_uwp),
+  Betweenness = betweenness_centrality1.1_uwp
+)
+
+bet_df1.1 <- bet_df1.1[order(bet_df1.1$Betweenness), ]
+
+ggplot(bet_df1.1, aes(x = reorder(Node, Betweenness), y = Betweenness)) +
+  geom_segment(aes(xend = Node, yend = 0), linewidth = 0.8) +
+  geom_point(size = 3) +
+  coord_flip() +
+  scale_y_continuous(
+    breaks = seq(0,50, by = 10),
+    limits = c(0, 50)
+  ) +
+  labs(
+    title = "Cluster 1",
+    x = "",
+    y = "Betweenness"
+  )  +
+  theme_minimal()+
+  theme(plot.title=element_text(size=20, hjust = 0.25),
+        axis.text.y = element_text(size = 12))
+
+##plot Cluster 1 network
+# Extract edge list from graph
+edge_list1.1 <- as_edgelist(g1.1_uwp)
+
+# Extract sign from original partial correlation matrix
+edge_colors1.1_uwp <- ifelse(
+  pcor_mat1.1_uwp[
+    cbind(edge_list1.1[,1], edge_list1.1[,2])
+  ] > 0,
+  "mediumpurple1",
+  "orange"
+)
+###Community detection
+####Identifying optimal resolution###
+Resolution <- seq(0.1, 1, by = 0.1)
+communities_list <- list()
+
+for (res in Resolution) {
+  communities_list[[as.character(res)]] <- cluster_leiden(g1.1_uwp, resolution = res)
+}
+
+num_comms <- sapply(communities_list, function(x) length(unique(membership(x))))
+
+mods <- sapply(communities_list, function(comm) {
+  modularity(g1.1_uwp, membership(comm))
+})
+
+##Optimal resolution for stable communities (identify consistent values among at least 2 points)
+plot(Resolution, num_comms, type = "b",
+     xlab = "Resolution", ylab = "# Communities",
+     main = "Communities vs Resolution")
+##Optimal resolution for maximum modularity 
+plot(Resolution, mods, type = "b",
+     xlab = "Resolution", ylab = "Modularity",
+     main = "Modularity vs Resolution")
+###Identify the resolution where number of stable communities matches the maximum modulation
+
+##################
+### Create bluescale palette for degree centrality in network figure
+blue_palette <- colorRampPalette(
+  c("#F2F5F9", "#C7D6E5", "#8FA8C2", "#5D7B99", "#2F4F6F")
+)(100)
+
+###community detection with Leiden
+set.seed(12)
+leiden_result1.1_uwp <- cluster_leiden(g1.1_uwp, resolution = 0.2)
+set.seed(12) 
+plot(leiden_result1.1_uwp, g1.1_uwp, 
+     layout = layout_with_fr(g1.1_uwp),
+     edge.width = 4,
+     edge.color = edge_colors1.1_uwp,
+     col = blue_palette[
+       round(norm_degree1.1_uwp * 99) + 1], ##color gradient based on normalized betweenness
+     mark.col=rep("gray"),
+     mark.border = NA,
+     vertex.label.cex = 0.9,
+     vertex.size = (betweenness_centrality1.1_uwp*0.75), ##resize nodes based on betweenness
+     vertex.label.color = "black")
+title(main = "Cluster 1", line = 2, cex.main = 2.5)
+###verify community membership
+membership_vector1.1_uwp <- membership(leiden_result1.1_uwp)
+membership_vector1.1_uwp
+###
+
+####Cluster 2 networks#####
+pcor_mat1.2_uwp <- pcor_mat1.2
+pcor_mat1.2_uwp[p_mat1.2 >= alpha] <- 0
+diag(pcor_mat1.2_uwp) <- 0
+pcor_unweighted1.2_uwp <- ifelse(pcor_mat1.2_uwp != 0, 1, 0)  # any non-zero value becomes 1
+
+g1.2_uwp <- graph_from_adjacency_matrix(pcor_unweighted1.2_uwp,
+                                        mode = "undirected",
+                                        weighted = NULL,
+                                        diag = FALSE)
+
+# Degree centrality (unweighted)
+degree_centrality1.2_uwp <- degree(g1.2_uwp, mode = "all", loops = FALSE) 
+
+# Normalize to [0,1]
+norm_degree1.2_uwp <- (degree_centrality1.2_uwp) /
+  (max(degree_centrality1.2_uwp))
+
+# Rank in descending order (1 = highest degree)
+rank_degree1.2_uwp <- rank(-degree_centrality1.2_uwp)
+
+# Combine and view
+degree_table1.2_uwp <- data.frame(
+  Degree = degree_centrality1.2_uwp,
+  Normalized = round(norm_degree1.2_uwp, 3),
+  Rank = rank_degree1.2_uwp
+)
+# Order by rank
+degree_table1.2_uwp <- degree_table1.2_uwp[order(degree_table1.2_uwp$Rank), ]
+
+print(degree_table1.2_uwp)
+
+###visualize Degree
+degree_df1.2 <- data.frame(
+  Node = names(degree_centrality1.2_uwp),
+  Degree = degree_centrality1.2_uwp
+)
+
+degree_df1.2 <- degree_df1.2[order(degree_df1.2$Degree), ]
+
+ggplot(degree_df1.2, aes(x = reorder(Node, Degree), y = Degree)) +
+  geom_segment(aes(xend = Node, yend = 0), linewidth = 0.8) +
+  geom_point(size = 3) +
+  coord_flip() +
+  scale_y_continuous(
+    breaks = 0:5,
+    limits = c(0, 5)
+  ) +
+  labs(
+    title = "Cluster 2",
+    x = "",
+    y = "Degree"
+  ) +
+  theme_minimal()+
+  theme(plot.title=element_text(size=20, hjust = 0.25),
+        axis.text.y = element_text(size = 12))
+
+### Unweighted Betweenness ###
+betweenness_centrality1.2_uwp <- betweenness(
+  g1.2_uwp,
+  weights = NULL,      #ignore edge weights
+  normalized = FALSE
+)
+# Normalized unweighted betweenness
+norm_betweenness1.2_uwp <- betweenness(
+  g1.2_uwp,
+  weights = NULL,      #ignore edge weights
+  normalized = TRUE
+)
+# Rank in descending order (higher = more central)
+rank_betweenness1.2_uwp <- rank(-betweenness_centrality1.2_uwp)
+betweenness_table1.2_uwp <- data.frame(
+  Betweenness = round(betweenness_centrality1.2_uwp, 2),
+  Normalized = round(norm_betweenness1.2_uwp, 2),
+  Rank = rank_betweenness1.2_uwp
+)
+betweenness_table1.2_uwp <- betweenness_table1.2_uwp[order(betweenness_table1.2_uwp$Rank), ]
+
+print(betweenness_table1.2_uwp)
+
+###visualize Betweenness
+bet_df1.2 <- data.frame(
+  Node = names(betweenness_centrality1.2_uwp),
+  Betweenness = betweenness_centrality1.2_uwp
+)
+
+bet_df1.2 <- bet_df1.2[order(bet_df1.2$Betweenness), ]
+
+ggplot(bet_df1.2, aes(x = reorder(Node, Betweenness), y = Betweenness)) +
+  geom_segment(aes(xend = Node, yend = 0), linewidth = 0.8) +
+  geom_point(size = 3) +
+  coord_flip() +
+  scale_y_continuous(
+    breaks = seq(0,50, by = 10),
+    limits = c(0, 50)
+  ) +
+  labs(
+    title = "Cluster 2",
+    x = "",
+    y = "Betweenness"
+  )  +
+  theme_minimal()+
+  theme(plot.title=element_text(size=20, hjust = 0.25),
+        axis.text.y = element_text(size = 12))
+
+###Plot Cluster 2 network
+# Get edge list from graph
+edge_list1.2 <- as_edgelist(g1.2_uwp)
+
+# Extract sign from original partial correlation matrix
+edge_colors1.2_uwp <- ifelse(
+  pcor_mat1.2_uwp[
+    cbind(edge_list1.2[,1], edge_list1.2[,2])
+  ] > 0,
+  "mediumpurple1",
+  "orange"
+)
+
+###Community detection
+####Identifying optimal resolution###
+for (res in Resolution) {
+  communities_list[[as.character(res)]] <- cluster_leiden(g1.2_uwp, resolution = res)
+}
+
+num_comms <- sapply(communities_list, function(x) length(unique(membership(x))))
+
+mods <- sapply(communities_list, function(comm) {
+  modularity(g1.2_uwp, membership(comm))
+})
+
+
+plot(Resolution, num_comms, type = "b",
+     xlab = "Resolution", ylab = "# Communities",
+     main = "Communities vs Resolution")
+
+plot(Resolution, mods, type = "b",
+     xlab = "Resolution", ylab = "Modularity",
+     main = "Modularity vs Resolution")
+##################
+set.seed(15)
+leiden_result1.2_uwp <- cluster_leiden(g1.2_uwp, resolution = 0.3)
+set.seed(15) 
+plot(leiden_result1.2_uwp, g1.2_uwp, 
+     layout = layout_with_fr(g1.2_uwp),
+     edge.width = 4,
+     edge.color = edge_colors1.2_uwp,
+     col = blue_palette[
+       round(norm_degree1.2_uwp * 99) + 1],
+     mark.col=rep("gray"),
+     mark.border = NA,
+     vertex.label.cex = 0.9,
+     vertex.size = (betweenness_centrality1.2_uwp*0.75),
+     vertex.label.color = "black")
+title(main = "Cluster 2", line = 2, cex.main = 2.5)
+membership_vector1.2_uwp <- membership(leiden_result1.2_uwp)
+membership_vector1.2_uwp
+
+###
+
+###Plot Cluster 3 network
+pcor_mat1.3_uwp <- pcor_mat1.3
+pcor_mat1.3_uwp[p_mat1.3 >= alpha] <- 0
+diag(pcor_mat1.3_uwp) <- 0
+pcor_unweighted1.3_uwp <- ifelse(pcor_mat1.3_uwp != 0, 1, 0)  # any non-zero value becomes 1
+
+g1.3_uwp <- graph_from_adjacency_matrix(pcor_unweighted1.3_uwp,
+                                        mode = "undirected",
+                                        weighted = NULL,
+                                        diag = FALSE)
+
+# Degree centrality (unweighted)
+degree_centrality1.3_uwp <- degree(g1.3_uwp, mode = "all", loops = FALSE)  # 'all' counts in+out edges for undirected
+
+# Normalize to [0,1]
+norm_degree1.3_uwp <- (degree_centrality1.3_uwp) /
+  (max(degree_centrality1.3_uwp))
+
+# Rank in descending order (1 = highest degree)
+rank_degree1.3_uwp <- rank(-degree_centrality1.3_uwp)
+
+# Combine and view
+degree_table1.3_uwp <- data.frame(
+  Degree = degree_centrality1.3_uwp,
+  Normalized = round(norm_degree1.3_uwp, 2),
+  Rank = rank_degree1.3_uwp
+)
+# Order by rank
+degree_table1.3_uwp <- degree_table1.3_uwp[order(degree_table1.3_uwp$Rank), ]
+
+print(degree_table1.3_uwp)
+
+###visualize Degree
+degree_df1.3 <- data.frame(
+  Node = names(degree_centrality1.3_uwp),
+  Degree = degree_centrality1.3_uwp
+)
+
+degree_df1.3 <- degree_df1.3[order(degree_df1.3$Degree), ]
+
+ggplot(degree_df1.3, aes(x = reorder(Node, Degree), y = Degree)) +
+  geom_segment(aes(xend = Node, yend = 0), linewidth = 0.8) +
+  geom_point(size = 3) +
+  coord_flip() +
+  scale_y_continuous(
+    breaks = 0:5,
+    limits = c(0, 5)
+  ) +
+  labs(
+    title = "Cluster 3",
+    x = "",
+    y = "Degree"
+  )  +
+  theme_minimal()+
+  theme(plot.title=element_text(size=20, hjust = 0.25),
+        axis.text.y = element_text(size = 12))
+
+### Unweighted Betweenness ###
+betweenness_centrality1.3_uwp <- betweenness(
+  g1.3_uwp,
+  weights = NULL,      #ignore edge weights
+  normalized = FALSE
+)
+# Normalized unweighted betweenness
+norm_betweenness1.3_uwp <- betweenness(
+  g1.3_uwp,
+  weights = NULL,      #ignore edge weights
+  normalized = TRUE
+)
+# Rank in descending order (higher = more central)
+rank_betweenness1.3_uwp <- rank(-betweenness_centrality1.3_uwp)
+betweenness_table1.3_uwp <- data.frame(
+  Betweenness = round(betweenness_centrality1.3_uwp, 2),
+  Normalized = round(norm_betweenness1.3_uwp, 2),
+  Rank = rank_betweenness1.3_uwp
+)
+betweenness_table1.3_uwp <- betweenness_table1.3_uwp[order(betweenness_table1.3_uwp$Rank), ]
+
+print(betweenness_table1.3_uwp)
+
+###visualize Betweenness
+bet_df1.3 <- data.frame(
+  Node = names(betweenness_centrality1.3_uwp),
+  Betweenness = betweenness_centrality1.3_uwp
+)
+
+bet_df1.3 <- bet_df1.3[order(bet_df1.3$Betweenness), ]
+
+ggplot(bet_df1.3, aes(x = reorder(Node, Betweenness), y = Betweenness)) +
+  geom_segment(aes(xend = Node, yend = 0), linewidth = 0.8) +
+  geom_point(size = 3) +
+  coord_flip() +
+  scale_y_continuous(
+    breaks = seq(0,50, by = 10),
+    limits = c(0, 50)
+  ) +
+  labs(
+    title = "Cluster 3",
+    x = "",
+    y = "Betweenness"
+  )  +
+  theme_minimal()+
+  theme(plot.title=element_text(size=20, hjust = 0.25),
+        axis.text.y = element_text(size = 12))
+
+
+###plot network
+# Get edge list from graph
+edge_list1.3 <- as_edgelist(g1.3_uwp)
+
+# Extract sign from original partial correlation matrix
+edge_colors1.3_uwp <- ifelse(
+  pcor_mat1.3_uwp[
+    cbind(edge_list1.3[,1], edge_list1.3[,2])
+  ] > 0,
+  "mediumpurple1",
+  "orange"
+)
+
+###Community detection
+####Identifying optimal resolution###
+for (res in Resolution) {
+  communities_list[[as.character(res)]] <- cluster_leiden(g1.3_uwp, resolution = res)
+}
+
+num_comms <- sapply(communities_list, function(x) length(unique(membership(x))))
+
+mods <- sapply(communities_list, function(comm) {
+  modularity(g1.3_uwp, membership(comm))
+})
+
+
+plot(Resolution, num_comms, type = "b",
+     xlab = "Resolution", ylab = "# Communities",
+     main = "Communities vs Resolution")
+
+plot(Resolution, mods, type = "b",
+     xlab = "Resolution", ylab = "Modularity",
+     main = "Modularity vs Resolution")
+##################
+
+set.seed(15)
+leiden_result1.3_uwp <- cluster_leiden(g1.3_uwp, resolution = 0.3)
+set.seed(15)
+plot(leiden_result1.3_uwp, g1.3_uwp, 
+     layout = layout_with_fr(g1.3_uwp),
+     edge.width = 4,
+     edge.color = edge_colors1.3_uwp,
+     col = blue_palette[
+       round(norm_degree1.3_uwp * 99) + 1],
+     mark.col=rep("gray"),
+     mark.border = NA,
+     vertex.label.cex = 0.9,
+     vertex.size = (betweenness_centrality1.3_uwp*0.75),
+     vertex.label.color = "black")
+title(main = "Cluster 3", line = 2, cex.main = 2.5)
+membership_vector1.3_uwp <- membership(leiden_result1.3_uwp)
+membership_vector1.3_uwp
+
+#########################
+###Aim 2: Compare HCCPN and LCA subgroup clustering agreement and participant membership overlap 
+
+
+####Adjusted RAND index, Adjusted Mutual information and normal mutual information###
+install.packages("aricode")
+library(aricode) #for ARI, AMI, NMI
+#extract labels from HCCPN
+HCCPN_labels <- data$cluster
+#extract labels from LCA
+LCA_labels<- data$lcaclass
+# Compute Adjusted Rand Index
+ARI<-ARI(LCA_labels, HCCPN_labels)
+print(ARI)
+####Adjusted mutual information
+AMI<-AMI(LCA_labels, HCCPN_labels) 
+print(AMI)
+###Normalized Mutual Information
+NMI<-NMI(LCA_labels, HCCPN_labels) 
+print(NMI)
+
+###Assess participant overlap
+#Calculate the percentage overlap between the groups
+hc_1<-subset(data, cluster == 1)
+lca_1 <-subset(data, lcaclass == 1)
+hc_2<-subset(data, cluster == 2)
+lca_2 <-subset(data, lcaclass == 2)
+hc_3<-subset(data, cluster == 3)
+lca_3 <-subset(data, lcaclass == 3)
+lca_4 <-subset(data, lcaclass == 4)
+overlap_hc1.1 <- merge(hc_1, lca_1, by = "id")
+descrip(overlap_hc1.1$id)
+overlap_hc1.2 <- merge(hc_1, lca_2, by = "id")
+descrip(overlap_hc1.2$id)
+overlap_hc1.3 <- merge(hc_1, lca_3, by = "id")
+descrip(overlap_hc1.3$id)
+overlap_hc1.4 <- merge(hc_1, lca_4, by = "id")
+descrip(overlap_hc1.4$id)
+overlap_hc2.1 <- merge(hc_2, lca_1, by = "id")
+descrip(overlap_hc2.1$id)
+overlap_hc2.2 <- merge(hc_2, lca_2, by = "id")
+descrip(overlap_hc2.2$id)
+overlap_hc2.3 <- merge(hc_2, lca_3, by = "id")
+descrip(overlap_hc2.3$id)
+overlap_hc2.4 <- merge(hc_2, lca_4, by = "id")
+descrip(overlap_hc2.4$id)
+overlap_hc3.1 <- merge(hc_3, lca_1, by = "id")
+descrip(overlap_hc3.1$id)
+overlap_hc3.2 <- merge(hc_3, lca_2, by = "id")
+descrip(overlap_hc3.2$id)
+overlap_hc3.3 <- merge(hc_3, lca_3, by = "id")
+descrip(overlap_hc3.3$id)
+overlap_hc3.4 <- merge(hc_3, lca_4, by = "id")
+descrip(overlap_hc3.4$id)
+
+###Sankey plot
+install.packages("ggalluvial")
+library(ggalluvial) #for Sankey Plot
+sankey_data<-data %>% count(lcaclass, cluster)
+sankey_data$Cluster<-as.factor(sankey_data$cluster)
+sankey_data$Cluster <- factor(sankey_data$cluster,
+                              levels = c(1,2,3),
+                              labels = c("Social Participation central perceptions",
+                                         "Duration-Dependent Leg Pain Interference central perceptions",
+                                         "Complex, Multifactorial Functional Limitations central perceptions"))
+sankey_data$LCAclass <- factor(sankey_data$lcaclass,
+                               levels = c(1,2,3,4),
+                               labels = c("High Pain Impact, Low Psychosocial Features",
+                                          "Mild Pain Impact, Low Psychosocial Features",
+                                          "High Pain Impact, Complex Health Needs",
+                                          "Acute, Intermittent Moderate-Severe Leg Pain with High Pain Impact"))
+######
+ggplot(sankey_data,
+       aes(axis1 = Cluster, axis2 = LCAclass, y = n)) +
+  geom_alluvium(aes(fill = Cluster), width = 0.1) +
+  scale_fill_manual(values = c("Social Participation central perceptions"="orange", 
+                               "Duration-Dependent Leg Pain Interference central perceptions" = "darkblue", 
+                               "Complex, Multifactorial Functional Limitations central perceptions" = "darkgreen")) +
+  geom_stratum(width = 0.2, fill = "grey80", color = "black") +
+  geom_text(
+    stat = "stratum",
+    aes(label = stringr::str_wrap(after_stat(stratum), width = 20)),
+    size = 3) +
+  scale_x_discrete(limits = c("Hierarchical Clusters", "LCA Classes"),
+                   expand = c(.1, .1)) +
+  labs(y = "Number of Participants",
+       title = "Cluster and Class Participant Overlap") +
+  theme(plot.title=element_text(hjust = 0.5, face = "bold", size = 14),
+        legend.position = "none")
